@@ -29,19 +29,24 @@ def main():
         return
 
     # 0) Local embed model (must match what you used in ingest)
+    print("🔄 Loading embedding model...")
     embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
     # 1) Load BM25
+    print("🔄 Loading BM25 index...")
     bm25 = load_bm25("storage")
 
     # 2) Vector query to Qdrant (IMPORTANT: use query_embedding, not query_str)
-    client = QdrantClient(url=SETTINGS.qdrant_url)
+    print("🔄 Connecting to Qdrant...")
+    client = QdrantClient(url=SETTINGS.qdrant_url, timeout=SETTINGS.qdrant_timeout)
     vector_store = QdrantVectorStore(client=client, collection_name=SETTINGS.collection)
 
+    print("🔄 Generating query embedding...")
     q_emb = embed_model.get_query_embedding(question)
     if q_emb is None:
         raise RuntimeError("Query embedding is None. Check HuggingFaceEmbedding installation/model.")
 
+    print("🔍 Searching vector database...")
     vq = VectorStoreQuery(query_embedding=q_emb, similarity_top_k=SETTINGS.top_k_vec)
     vec_res = vector_store.query(vq)
 
@@ -56,9 +61,11 @@ def main():
         vec_ranked.append((ch, float(score)))
 
     # 3) BM25 query
+    print("🔍 Performing BM25 search...")
     bm25_ranked = bm25.query(question, top_k=SETTINGS.top_k_bm25)
 
     # 4) Fuse via RRF
+    print("🔄 Fusing search results...")
     fused = rrf_fuse(vec_ranked, bm25_ranked, k=SETTINGS.rrf_k)[: SETTINGS.final_top_k]
     fused_chunks = [c for c, _ in fused]
     context = format_context(fused_chunks)
@@ -86,11 +93,17 @@ def main():
     )
 
     # 6) Local LLM via Ollama
-    llm = Ollama(model="llama3", temperature=0.1, request_timeout=120.0)
+    llm = Ollama(model="llama3", temperature=0.1, request_timeout=SETTINGS.llm_timeout)
 
-    resp = llm.chat(
-        [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
-    )
+    try:
+        print("\n🤔 Generating response... (this may take a while)")
+        resp = llm.chat(
+            [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
+        )
+    except Exception as e:
+        print(f"❌ Error generating response: {e}")
+        print("💡 Try: 1) Check if Ollama is running, 2) Reduce query complexity, 3) Check network connection")
+        return
 
     text = resp.message.content.strip()
     try:

@@ -7,5 +7,9 @@ class Settings(BaseModel):
     top_k_bm25: int = 12
     rrf_k: int = 60          # typical 60
     final_top_k: int = 8     # context chunks sent to LLM
+    
+    # Timeout settings
+    qdrant_timeout: float = 30.0      # seconds
+    llm_timeout: float = 300.0        # seconds (5 minutes)
 
 SETTINGS = Settings()
