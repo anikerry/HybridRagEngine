@@ -1,1 +1,91 @@
+# Environment and secrets
 .env
+*.env
+
+# Python cache and bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and monitoring
+logs/
+*.log
+metrics.jsonl
+
+# Evaluation outputs
+evaluation_results.json
+demo_evaluation_results.json
+evaluation_report/
+demo_evaluation_report/
+
+# Performance charts
+performance_charts.png
+
+# Temporary files
+*.tmp
+*.temp
+
+# Database files
+qdrant_data/
+
+# Model files (if any local models)
+models/
+*.bin
+*.safetensors
+
+# Documentation builds
+docs/_build/
+site/
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Data files  
+data/processed/
+data/raw/
+!data/docs/
+storage/chunks.jsonl

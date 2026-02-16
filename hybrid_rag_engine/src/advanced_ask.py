@@ -59,7 +59,7 @@ class QueryResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     services: Dict[str, str]
-    version: str = "1.0.0"
+    version: str = "2.0.0"
 
 class AnalyticsResponse(BaseModel):
     total_queries: int
@@ -262,6 +262,7 @@ class AdvancedHybridRAG:
             analytics_data.append({
                 "timestamp": datetime.now().isoformat(),
                 "query_id": query_id,
+                "question": request.question,
                 "question_length": len(request.question),
                 "processing_time": processing_time,
                 "llm_provider": request.llm_provider,
@@ -298,6 +299,14 @@ class AdvancedHybridRAG:
         except Exception as e:
             yield f"data: {{\"type\": \"error\", \"error\": \"{str(e)}\"}}\n\n"
 
+def format_context(chunks: List[Chunk]) -> str:
+    """Format chunks for LLM context"""
+    lines = []
+    for i, c in enumerate(chunks, start=1):
+        cite = f"[{i}] {c.source}" + (f" p.{c.page}" if c.page is not None else "")
+        lines.append(f"{cite}\n{c.text}")
+    return "\n\n---\n\n".join(lines)
+
 # Global RAG engine instance
 rag_engine = AdvancedHybridRAG()
 
@@ -317,113 +326,149 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-def format_context(chunks: List[Chunk]) -> str:
-    lines = []
-    for i, c in enumerate(chunks, start=1):
-        cite = f"[{i}] {c.source}" + (f" p.{c.page}" if c.page is not None else "")
-        lines.append(f"{cite}\n{c.text}")
-    return "\n\n---\n\n".join(lines)
+# FastAPI Endpoints
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Health check endpoint"""
+    services = {
+        "qdrant": "healthy" if rag_engine.client else "unavailable",
+        "bm25": "healthy" if rag_engine.bm25 else "unavailable",
+        "embeddings": "healthy" if rag_engine.embed_model else "unavailable",
+        "ollama": "healthy" if rag_engine.ollama_llm else "unavailable",
+        "openai": "healthy" if rag_engine.openai_llm else "unavailable"
+    }
+    
+    return HealthResponse(
+        status="healthy",
+        services=services
+    )
 
+@app.post("/query", response_model=QueryResponse)
+async def query_endpoint(request: QueryRequest, background_tasks: BackgroundTasks):
+    """Process a query and return the response"""
+    return await rag_engine.query(request)
 
-def main():
+@app.post("/query/stream")
+async def stream_query_endpoint(request: QueryRequest):
+    """Stream query response for real-time interaction"""
+    return StreamingResponse(
+        rag_engine.stream_query(request),
+        media_type="text/plain",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
+    )
+
+@app.get("/analytics", response_model=AnalyticsResponse)
+async def get_analytics():
+    """Get system analytics and metrics"""
+    if not analytics_data:
+        return AnalyticsResponse(
+            total_queries=0,
+            avg_response_time=0.0,
+            popular_topics=[],
+            cache_hit_rate=0.0
+        )
+    
+    total_queries = len(analytics_data)
+    avg_response_time = sum(q["processing_time"] for q in analytics_data) / total_queries
+    cached_queries = sum(1 for q in analytics_data if q.get("cached", False))
+    cache_hit_rate = cached_queries / total_queries if total_queries > 0 else 0.0
+    
+    # Simple topic analysis based on question words
+    topics = {}
+    for q in analytics_data:
+        # This is a simplified version - in production you'd use NLP for topic modeling
+        question = q.get("question", "")
+        words = question.lower().split()
+        for word in words:
+            if len(word) > 4:  # Filter short words
+                topics[word] = topics.get(word, 0) + 1
+    
+    popular_topics = [topic for topic, count in sorted(topics.items(), key=lambda x: x[1], reverse=True)[:5]]
+    
+    return AnalyticsResponse(
+        total_queries=total_queries,
+        avg_response_time=avg_response_time,
+        popular_topics=popular_topics,
+        cache_hit_rate=cache_hit_rate
+    )
+
+@app.delete("/cache")
+async def clear_cache():
+    """Clear response cache"""
+    global response_cache
+    response_cache.clear()
+    return {"message": "Cache cleared successfully"}
+
+@app.get("/models")
+async def list_models():
+    """List available models and providers"""
+    return {
+        "providers": {
+            "ollama": {
+                "available": rag_engine.ollama_llm is not None,
+                "default_model": "llama3",
+                "supported_models": ["llama3", "mistral", "phi3", "codellama"]
+            },
+            "openai": {
+                "available": rag_engine.openai_llm is not None,
+                "default_model": "gpt-3.5-turbo",
+                "supported_models": ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo"]
+            }
+        }
+    }
+
+# CLI Interface (backward compatibility)
+def cli_main():
+    """CLI interface for backward compatibility"""
     question = input("Ask: ").strip()
     if not question:
         return
-
-    # 0) Local embed model (must match what you used in ingest)
-    print("🔄 Loading embedding model...")
-    embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
-
-    # 1) Load BM25
-    print("🔄 Loading BM25 index...")
-    bm25 = load_bm25("storage")
-
-    # 2) Vector query to Qdrant (IMPORTANT: use query_embedding, not query_str)
-    print("🔄 Connecting to Qdrant...")
-    client = QdrantClient(url=SETTINGS.qdrant_url, timeout=SETTINGS.qdrant_timeout)
-    vector_store = QdrantVectorStore(client=client, collection_name=SETTINGS.collection)
-
-    print("🔄 Generating query embedding...")
-    q_emb = embed_model.get_query_embedding(question)
-    if q_emb is None:
-        raise RuntimeError("Query embedding is None. Check HuggingFaceEmbedding installation/model.")
-
-    print("🔍 Searching vector database...")
-    vq = VectorStoreQuery(query_embedding=q_emb, similarity_top_k=SETTINGS.top_k_vec)
-    vec_res = vector_store.query(vq)
-
-    vec_ranked = []
-    for node, score in zip(vec_res.nodes, vec_res.similarities):
-        ch = Chunk(
-            chunk_id=node.node_id,
-            text=node.get_content(),
-            source=str((node.metadata or {}).get("source", "unknown")),
-            page=(node.metadata or {}).get("page", None),
+    
+    # Simple CLI query
+    import asyncio
+    
+    async def run_query():
+        await rag_engine.initialize()
+        
+        request = QueryRequest(
+            question=question,
+            use_streaming=False,
+            llm_provider="ollama",
+            model="llama3"
         )
-        vec_ranked.append((ch, float(score)))
+        
+        response = await rag_engine.query(request)
+        
+        print("\n=== ANSWER ===\n")
+        print(response.answer)
+        
+        print("\n=== CITATIONS ===\n")
+        for c in response.citations:
+            print(f"[{c['chunk']}] {c['source']}" + (f" p.{c['page']}" if c.get('page') else ""))
+        
+        print(f"\n=== METADATA ===\n")
+        print(f"Processing time: {response.processing_time:.2f}s")
+        print(f"Chunks used: {response.metadata['chunks_used']}")
+        print(f"LLM Provider: {response.metadata['llm_provider']}")
+    
+    asyncio.run(run_query())
 
-    # 3) BM25 query
-    print("🔍 Performing BM25 search...")
-    bm25_ranked = bm25.query(question, top_k=SETTINGS.top_k_bm25)
-
-    # 4) Fuse via RRF
-    print("🔄 Fusing search results...")
-    fused = rrf_fuse(vec_ranked, bm25_ranked, k=SETTINGS.rrf_k)[: SETTINGS.final_top_k]
-    fused_chunks = [c for c, _ in fused]
-    context = format_context(fused_chunks)
-
-    # If you haven't installed Ollama yet, uncomment next lines to verify retrieval first:
-    # print("\n=== TOP CONTEXT CHUNKS ===\n")
-    # for i, c in enumerate(fused_chunks, 1):
-    #     print(f"[{i}] {c.source}" + (f" p.{c.page}" if c.page is not None else ""))
-    #     print(c.text[:800], "\n")
-    # return
-
-    # 5) Citation-enforced response schema
-    system = (
-        "You are a technical assistant. Use ONLY the provided context.\n"
-        "Cite sources using bracket numbers like [1], [2] matching the context chunks.\n"
-        "If the answer is not contained in the context, say you don't know.\n"
-        "Return JSON with keys: answer, citations.\n"
-        "citations must be a list of objects: {chunk: int, source: str, page: int|null}.\n"
+def start_server():
+    """Start the FastAPI server"""
+    uvicorn.run(
+        "ask:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
     )
-
-    user = (
-        f"QUESTION:\n{question}\n\n"
-        f"CONTEXT CHUNKS:\n{context}\n\n"
-        "Return strictly valid JSON."
-    )
-
-    # 6) Local LLM via Ollama
-    llm = Ollama(model="llama3", temperature=0.1, request_timeout=SETTINGS.llm_timeout)
-
-    try:
-        print("\n🤔 Generating response... (this may take a while)")
-        resp = llm.chat(
-            [ChatMessage(role="system", content=system), ChatMessage(role="user", content=user)]
-        )
-    except Exception as e:
-        print(f"❌ Error generating response: {e}")
-        print("💡 Try: 1) Check if Ollama is running, 2) Reduce query complexity, 3) Check network connection")
-        return
-
-    text = resp.message.content.strip()
-    try:
-        data = json.loads(text)
-    except Exception:
-        print("⚠️ Non-JSON output:\n", text)
-        return
-
-    print("\n=== ANSWER ===\n")
-    print(data.get("answer", ""))
-
-    print("\n=== CITATIONS ===\n")
-    for c in data.get("citations", []):
-        print(
-            f"[{c['chunk']}] {c['source']}"
-            + (f" p.{c['page']}" if c.get("page") is not None else "")
-        )
-
 
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    if len(sys.argv) > 1 and sys.argv[1] == "--server":
+        print("🚀 Starting Advanced Hybrid RAG API Server on http://localhost:8000")
+        print("📚 API Documentation: http://localhost:8000/docs")
+        start_server()
+    else:
+        cli_main()
