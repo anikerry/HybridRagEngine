@@ -28,40 +28,120 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS for better styling and text contrast
 st.markdown("""
 <style>
+    /* Improve text contrast and visibility */
+    .main-content {
+        background-color: #ffffff;
+        color: #000000;
+    }
+    
+    /* Headers with better contrast */
     .main-header {
         font-size: 2.5rem;
         color: #1f77b4;
         text-align: center;
         margin-bottom: 2rem;
+        font-weight: bold;
     }
+    
+    /* Metric cards with good contrast */
     .metric-card {
-        background-color: #f0f2f6;
+        background-color: #f8f9fa;
         padding: 1rem;
         border-radius: 10px;
         border-left: 5px solid #1f77b4;
+        color: #212529;
     }
+    
+    /* Chat messages with high contrast */
     .chat-message {
         padding: 1rem;
         margin: 0.5rem 0;
         border-radius: 10px;
+        color: #000000;
     }
+    
     .user-message {
         background-color: #e3f2fd;
         border-left: 5px solid #2196f3;
+        color: #0d47a1;
     }
+    
     .bot-message {
         background-color: #f3e5f5;
         border-left: 5px solid #9c27b0;
+        color: #4a148c;
     }
+    
+    /* Citations with proper contrast */
     .citation {
-        background-color: #fff3e0;
+        background-color: #fff8e1;
         padding: 0.5rem;
         margin: 0.25rem 0;
         border-radius: 5px;
         font-size: 0.9rem;
+        border-left: 3px solid #ff9800;
+        color: #e65100;
+    }
+    
+    /* Improve text in text areas and inputs */
+    .stTextArea textarea, .stTextInput input {
+        background-color: #ffffff !important;
+        color: #000000 !important;
+        border: 2px solid #cccccc !important;
+    }
+    
+    /* Improve button visibility */
+    .stButton > button {
+        background-color: #1f77b4;
+        color: #ffffff;
+        border: none;
+        font-weight: bold;
+    }
+    
+    /* Improve sidebar text */
+    .sidebar .sidebar-content {
+        background-color: #f8f9fa;
+        color: #212529;
+    }
+    
+    /* Sources section styling */
+    .sources-section {
+        background-color: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #17a2b8;
+        margin: 1rem 0;
+    }
+    
+    .source-item {
+        background-color: #ffffff;
+        padding: 0.8rem;
+        margin: 0.5rem 0;
+        border-radius: 6px;
+        border-left: 3px solid #28a745;
+        color: #155724;
+    }
+    
+    /* Error messages */
+    .stError {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+    
+    /* Success messages */
+    .stSuccess {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+    
+    /* Make all text more readable */
+    .stMarkdown, .stText, .stDataFrame {
+        color: #212529 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -71,6 +151,8 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'analytics_data' not in st.session_state:
     st.session_state.analytics_data = []
+if 'user_input' not in st.session_state:
+    st.session_state.user_input = ""
 
 class RAGInterface:
     """Interface class for RAG system interaction"""
@@ -100,12 +182,12 @@ class RAGInterface:
     def query_rag(self, question: str, **kwargs) -> Dict:
         """Query the RAG system"""
         try:
+            # Remove use_streaming as it's not needed for demo server
             payload = {
                 "question": question,
-                "use_streaming": False,
                 **kwargs
             }
-            response = requests.post(f"{self.api_base_url}/query", json=payload)
+            response = requests.post(f"{self.api_base_url}/query", json=payload, timeout=300)  # 5 minute timeout for first query
             return response.json()
         except Exception as e:
             return {"error": str(e)}
@@ -135,16 +217,34 @@ class RAGInterface:
 def main():
     """Main Streamlit application"""
     
+    # Get API URL from command line args if provided
+    import sys
+    api_url = "http://localhost:8000"  # Default demo server
+    if "--api-url" in sys.argv:
+        try:
+            idx = sys.argv.index("--api-url")
+            api_url = sys.argv[idx + 1]
+        except (IndexError, ValueError):
+            pass
+    
     # Header
     st.markdown('<h1 class="main-header">🧠 Advanced Hybrid RAG Engine</h1>', 
                 unsafe_allow_html=True)
     
     # Initialize RAG interface
-    rag_interface = RAGInterface()
+    rag_interface = RAGInterface(api_base_url=api_url)
     
     # Sidebar for configuration
     with st.sidebar:
         st.header("⚙️ Configuration")
+        
+        # Show API endpoint
+        if "8001" in api_url:
+            st.info("🏠 Connected to Local RAG Server")
+        elif "8000" in api_url:
+            st.info("🎭 Connected to Demo Server") 
+        else:
+            st.info(f"🌐 Connected to: {api_url}")
         
         # System health check
         health_status = rag_interface.check_health()
@@ -155,7 +255,7 @@ def main():
             with st.expander("🚀 How to Start the System"):
                 st.code("""
 # Option 1: Start FastAPI server
-cd "D:\GenAI Projects\HybridRagEngine\hybrid_rag_engine"
+cd "D:/GenAI Projects/HybridRagEngine/hybrid_rag_engine"
 python src/advanced_ask.py --server
 
 # Option 2: Use setup script  
@@ -222,7 +322,7 @@ def chat_interface(rag_interface, provider, model, reranking, query_expansion):
     
     # Display chat history
     with chat_container:
-        for chat in st.session_state.chat_history:
+        for idx, chat in enumerate(st.session_state.chat_history):
             # User message
             st.markdown(f"""
             <div class="chat-message user-message">
@@ -254,7 +354,7 @@ def chat_interface(rag_interface, provider, model, reranking, query_expansion):
                     """, unsafe_allow_html=True)
             
             # Metadata
-            if st.checkbox(f"Show Details", key=f"details_{len(st.session_state.chat_history)}"):
+            if st.checkbox(f"Show Details", key=f"details_{idx}"):
                 metadata = chat.get('metadata', {})
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -268,7 +368,7 @@ def chat_interface(rag_interface, provider, model, reranking, query_expansion):
     
     # Input area
     st.subheader("Ask a Question")
-    question = st.text_area("Enter your question:", height=100)
+    question = st.text_area("Enter your question:", value=st.session_state.user_input, height=100, key="question_input")
     
     col1, col2 = st.columns([1, 4])
     with col1:
@@ -305,6 +405,9 @@ def chat_interface(rag_interface, provider, model, reranking, query_expansion):
                     }
                     st.session_state.chat_history.append(chat_entry)
                     st.session_state.analytics_data.append(chat_entry)
+                    # Clear the input after successful query
+                    st.session_state.user_input = ""
+                    # Use rerun to refresh the interface
                     st.rerun()
                 else:
                     st.error(f"Error: {response['error']}")
