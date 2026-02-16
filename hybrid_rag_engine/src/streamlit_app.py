@@ -77,12 +77,23 @@ class RAGInterface:
     
     def __init__(self, api_base_url: str = "http://localhost:8000"):
         self.api_base_url = api_base_url
+        self.offline_mode = False
         
     def check_health(self) -> Dict:
         """Check system health"""
         try:
-            response = requests.get(f"{self.api_base_url}/health")
-            return response.json()
+            response = requests.get(f"{self.api_base_url}/health", timeout=5)
+            if response.status_code == 200:
+                return response.json()
+            else:
+                return {"status": "error", "message": f"HTTP {response.status_code}"}
+        except requests.exceptions.ConnectionError:
+            self.offline_mode = True
+            return {
+                "status": "offline", 
+                "message": "API server not running",
+                "help": "Start the FastAPI server first"
+            }
         except Exception as e:
             return {"status": "error", "message": str(e)}
     
@@ -109,8 +120,14 @@ class RAGInterface:
     
     def get_models(self) -> Dict:
         """Get available models"""
+        if self.offline_mode:
+            return {
+                "ollama_models": [{"name": "llama3.2", "status": "demo"}],
+                "openai_models": [{"name": "gpt-4o", "status": "demo"}],
+                "demo_mode": True
+            }
         try:
-            response = requests.get(f"{self.api_base_url}/models")
+            response = requests.get(f"{self.api_base_url}/models", timeout=5)
             return response.json()
         except Exception as e:
             return {"error": str(e)}
@@ -133,9 +150,29 @@ def main():
         health_status = rag_interface.check_health()
         if health_status.get("status") == "healthy":
             st.success("✅ System Online")
+        elif health_status.get("status") == "offline":
+            st.warning("⚠️ API Server Offline")
+            with st.expander("🚀 How to Start the System"):
+                st.code("""
+# Option 1: Start FastAPI server
+cd "D:\GenAI Projects\HybridRagEngine\hybrid_rag_engine"
+python src/advanced_ask.py --server
+
+# Option 2: Use setup script  
+python setup.py --api
+
+# Option 3: Start with Qdrant (if Docker available)
+docker compose up -d
+python src/advanced_ask.py --server
+                """)
+            st.info("💡 The system needs the FastAPI server running to work properly.")
         else:
-            st.error("❌ System Offline")
+            st.error("❌ System Error")
             st.error(health_status.get("message", "Unknown error"))
+            
+        # Show offline mode warning if applicable
+        if rag_interface.offline_mode:
+            st.warning("📱 Running in offline mode - some features unavailable")
         
         # Model selection
         models_data = rag_interface.get_models()
@@ -204,10 +241,15 @@ def chat_interface(rag_interface, provider, model, reranking, query_expansion):
             if chat.get('citations'):
                 st.markdown("**📚 Sources:**")
                 for citation in chat['citations']:
+                    # Handle different citation formats (demo vs production)
+                    chunk_text = citation.get('chunk', citation.get('text', 'No content'))
+                    source_info = citation.get('source', citation.get('doc_id', 'Unknown source'))
+                    page_info = citation.get('page', '')
+                    
                     st.markdown(f"""
                     <div class="citation">
-                        [{citation['chunk']}] {citation['source']}
-                        {f" p.{citation['page']}" if citation.get('page') else ""}
+                        [{chunk_text}] {source_info}
+                        {f" p.{page_info}" if page_info else ""}
                     </div>
                     """, unsafe_allow_html=True)
             
@@ -233,35 +275,39 @@ def chat_interface(rag_interface, provider, model, reranking, query_expansion):
         ask_button = st.button("🚀 Ask", type="primary")
     
     if ask_button and question.strip():
-        with st.spinner("🤔 Thinking..."):
-            start_time = time.time()
-            
-            # Query the RAG system
-            response = rag_interface.query_rag(
-                question=question,
-                llm_provider=provider,
-                model=model,
-                enable_reranking=reranking,
-                enable_query_expansion=query_expansion
-            )
-            
-            processing_time = time.time() - start_time
-            
-            if "error" not in response:
-                # Add to chat history
-                chat_entry = {
-                    "question": question,
-                    "answer": response.get("answer", "No answer provided"),
-                    "citations": response.get("citations", []),
-                    "metadata": response.get("metadata", {}),
-                    "processing_time": response.get("processing_time", processing_time),
-                    "timestamp": datetime.now()
-                }
-                st.session_state.chat_history.append(chat_entry)
-                st.session_state.analytics_data.append(chat_entry)
-                st.rerun()
-            else:
-                st.error(f"Error: {response['error']}")
+        if rag_interface.offline_mode:
+            st.error("🔌 Cannot process questions - API server is offline")
+            st.info("Please start the FastAPI server first (see instructions in sidebar)")
+        else:
+            with st.spinner("🤔 Thinking..."):
+                start_time = time.time()
+                
+                # Query the RAG system
+                response = rag_interface.query_rag(
+                    question=question,
+                    llm_provider=provider,
+                    model=model,
+                    enable_reranking=reranking,
+                    enable_query_expansion=query_expansion
+                )
+                
+                processing_time = time.time() - start_time
+                
+                if "error" not in response:
+                    # Add to chat history
+                    chat_entry = {
+                        "question": question,
+                        "answer": response.get("answer", "No answer provided"),
+                        "citations": response.get("citations", []),
+                        "metadata": response.get("metadata", {}),
+                        "processing_time": response.get("processing_time", processing_time),
+                        "timestamp": datetime.now()
+                    }
+                    st.session_state.chat_history.append(chat_entry)
+                    st.session_state.analytics_data.append(chat_entry)
+                    st.rerun()
+                else:
+                    st.error(f"Error: {response['error']}")
 
 def analytics_dashboard(rag_interface):
     """Analytics dashboard implementation"""

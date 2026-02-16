@@ -14,12 +14,22 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import uvicorn
 from qdrant_client import QdrantClient
-from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.core.vector_stores import VectorStoreQuery
-from llama_index.core.llms import ChatMessage
-from llama_index.llms.ollama import Ollama
-from llama_index.llms.openai import OpenAI
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+try:
+    # Try the new import structure first
+    from llama_index.vector_stores.qdrant import QdrantVectorStore
+    from llama_index.core.vector_stores import VectorStoreQuery
+    from llama_index.core.llms import ChatMessage
+    from llama_index.llms.ollama import Ollama
+    from llama_index.llms.openai import OpenAI
+    from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+except ImportError:
+    # Fallback to older structure if needed
+    from llama_index_vector_stores_qdrant import QdrantVectorStore
+    from llama_index_core.vector_stores import VectorStoreQuery
+    from llama_index_core.llms import ChatMessage
+    from llama_index_llms_ollama import Ollama
+    from llama_index_llms_openai import OpenAI
+    from llama_index_embeddings_huggingface import HuggingFaceEmbedding
 from sentence_transformers import CrossEncoder
 import logging
 from functools import lru_cache
@@ -456,10 +466,10 @@ def cli_main():
 def start_server():
     """Start the FastAPI server"""
     uvicorn.run(
-        "ask:app",
+        app,
         host="0.0.0.0",
         port=8000,
-        reload=True,
+        reload=False,
         log_level="info"
     )
 
