@@ -6,7 +6,7 @@ from qdrant_client import QdrantClient
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.core.vector_stores import VectorStoreQuery
 from llama_index.core.llms import ChatMessage
-from llama_index.llms.openai import OpenAI
+from llama_index.llms.ollama import Ollama
 
 from config import SETTINGS
 from hybrid import load_bm25, rrf_fuse, Chunk
@@ -68,7 +68,10 @@ def main():
         "Return strictly valid JSON."
     )
 
-    llm = OpenAI(model="gpt-4o-mini", temperature=0.1)
+    llm = Ollama(
+    model="llama3",
+    temperature=0.1,)
+
     resp = llm.chat([ChatMessage(role="system", content=system),
                      ChatMessage(role="user", content=user)])
 

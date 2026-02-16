@@ -7,6 +7,8 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+
 
 from config import SETTINGS
 from hybrid import Chunk, save_bm25
@@ -72,7 +74,14 @@ def main():
             )
         )
 
-    VectorStoreIndex(vnodes, storage_context=storage_context)
+    embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-en-v1.5")
+
+    VectorStoreIndex(
+    vnodes,
+    storage_context=storage_context,
+    embed_model=embed_model)
+
     print(f"✅ Ingested {len(chunks)} chunks into BM25 + Qdrant collection '{SETTINGS.collection}'")
 
 if __name__ == "__main__":
